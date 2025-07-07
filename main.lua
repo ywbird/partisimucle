@@ -8,6 +8,7 @@ local printtable = require("lib.printtable")
 local WIDTH = 800
 local HEIGHT = 600
 local CAMERA_SPEED = 400
+local DETECT_RANGE = 60
 
 local random = love.math.random
 
@@ -15,19 +16,19 @@ local random = love.math.random
 
 --- @class Particle
 --- @field pos Vec2
---- @field dir number
---- @field speed number
+--- @field speed Vec2
+--- @field mass number
 -- --- @field uid string
 local Particle = {}
 Particle.__index = Particle
 
---- @param properties { pos: Vec2|nil , dir: Vec2|nil , speed: number|nil }
+--- @param properties { pos: Vec2|nil, speed: Vec2|nil, mass: number|nil }
 --- @return Particle
 function Particle:new(properties)
   local instance = setmetatable({}, self)
   instance.pos = properties.pos or vec2(0, 0)
-  instance.dir = properties.dir or math.pi * 2 * random()
-  instance.speed = properties.speed or 10
+  instance.speed = properties.speed or rotated(math.pi * 2 * random())
+  instance.mass = properties.mass or 1
   --instance.uid = uid()
   return instance
 end
@@ -52,8 +53,15 @@ function love.load()
   font.galmuri.normal = love.graphics.newFont("assets/fonts/Galmuri11.ttf", 12)
   love.graphics.setFont(font.galmuri.normal)
 
+  cursor = {}
+  cursor.pointer = love.mouse.getSystemCursor("arrow")
+  cursor.hand = love.mouse.getSystemCursor("hand")
+
   --- @type Particle[]
   particles = {}
+
+  --- @type Particle[]
+  particles_buf = {}
 
   for _ = 1, 1000, 1 do
     -- love.math.setRandomSeed(os.time())
@@ -64,7 +72,7 @@ function love.load()
       pos = pos,
     })
 
-    table.insert(particles, particle)
+    table.insert(particles_buf, particle)
   end
 
   --- @type Rect
@@ -110,7 +118,7 @@ function love.update(dt)
 
   camera = camera + move * modif
 
-  if love.keyboard.isDown("=") then
+  if love.keyboard.isDown("+") then
     zoom = zoom + dt
   end
   if love.keyboard.isDown("-") then
@@ -120,6 +128,8 @@ function love.update(dt)
     end
   end
 
+  particles = utils.copy(particles_buf)
+
   qt = QuadTree:new(world)
 
   for _, particle in ipairs(particles) do
@@ -128,24 +138,26 @@ function love.update(dt)
 
   for _, particle in ipairs(particles) do
     local near_particles_query = qt:query({
-      x = particle.pos.x - 30,
-      y = particle.pos.y - 30,
-      w = 60,
-      h = 60,
+      x = particle.pos.x - DETECT_RANGE,
+      y = particle.pos.y - DETECT_RANGE,
+      w = DETECT_RANGE * 2,
+      h = DETECT_RANGE * 2,
     } --[[@as Rect]])
+
+    particle.pos = particle.pos + particle.speed * 10 * dt
 
     -- printtable(near_particles_query)
     for _, p in ipairs(near_particles_query) do
-      local d = particle.pos:dist(p.pos)
-      if d < 30 then
-        particle.pos = particle.pos - (p.pos - particle.pos) / 20 * dt
+      if p.pos ~= particle.pos then
+        -- local d = particle.pos:dist2(p.pos)
+        -- if d < DETECT_RANGE * DETECT_RANGE then
+        --   particle.pos = particle.pos - (p.pos - particle.pos) / d * dt * 200
+        -- end
       end
     end
-
-    -- particle.pos = particle.pos + rotated(particle.dir) * particle.speed * dt
   end
 
-  particles = qt:query(world)
+  particles_buf = qt:query(world)
 end
 
 function love.draw()
@@ -160,21 +172,51 @@ function love.draw()
       300 + (particle.pos.y - camera.y) * zoom,
       3 * zoom
     )
-    -- love.graphics.print(
-    --   "   " .. particle.pos:__tostring(),
+    love.graphics.line(
+      400 + (particle.pos.x - camera.x) * zoom, --
+      300 + (particle.pos.y - camera.y) * zoom, --
+      400 + (particle.pos.x + particle.speed.x * 10 - camera.x) * zoom, --
+      300 + (particle.pos.y + particle.speed.y * 10 - camera.y) * zoom --
+    )
+    -- love.graphics.circle(
+    --   "line",
     --   400 + (particle.pos.x - camera.x) * zoom,
-    --   300 + (particle.pos.y - camera.y) * zoom
+    --   300 + (particle.pos.y - camera.y) * zoom,
+    --   DETECT_RANGE * zoom
+    -- )
+    -- love.graphics.circle(
+    --   "line",
+    --   400 + (particle.pos.x - camera.x) * zoom,
+    --   300 + (particle.pos.y - camera.y) * zoom,
+    --   DETECT_RANGE * zoom / 2
     -- )
   end
 
-  love.graphics.setColor(1, 0, 0, 1)
-  love.graphics.rectangle("fill", 400 - 1, 300 - 10, 2, 20)
-  love.graphics.rectangle("fill", 400 - 10, 300 - 1, 20, 2)
+  -- love.graphics.setColor(1, 0, 0, 1)
+  -- love.graphics.rectangle("fill", 400 - 1, 300 - 10, 2, 20)
+  -- love.graphics.rectangle("fill", 400 - 10, 300 - 1, 20, 2)
 end
 
 function love.keypressed(k)
   if k == "q" then
     love.event.quit()
+  end
+end
+
+function love.wheelmoved(_, y)
+  zoom = zoom + y * 0.1
+  if zoom <= 0.1 then
+    zoom = 0.1
+  end
+end
+
+function love.mousemoved(x, y, dx, dy, _)
+  if love.mouse.isDown(1) then
+    love.mouse.setCursor(cursor.hand)
+    camera.x = camera.x - dx / zoom
+    camera.y = camera.y - dy / zoom
+  else
+    love.mouse.setCursor(cursor.pointer)
   end
 end
 
@@ -189,14 +231,14 @@ end
 ---@param x number
 ---@return number
 function f_precos(x)
-  return precos[math.floor(180 / math.pi * x)]
+  return precos[math.ceil(180 / math.pi * x)]
 end
 
 ---pre computed cos function
 ---@param x number
 ---@return number
 function f_presin(x)
-  return presin[math.floor(180 / math.pi * x)]
+  return presin[math.ceil(180 / math.pi * x)]
 end
 
 --- @param dir number

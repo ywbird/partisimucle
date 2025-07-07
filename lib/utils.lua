@@ -2,18 +2,17 @@ local module = {}
 
 --- @param rect Rect
 --- @param point Vec2
-function rect_contains(rect, point)
+function module.rect_contains(rect, point)
   return point.x >= rect.x --
     and point.x < rect.x + rect.w --
     and point.y < rect.y + rect.h --
     and point.y >= rect.y --
 end
-module.rect_contains = rect_contains
 
 --- @param r1 Rect
 --- @param r2 Rect
 --- @return Rect|nil
-function rect_intersection(r1, r2)
+function module.rect_intersection(r1, r2)
   local left = math.max(r1.x, r2.x)
   local top = math.max(r1.y, r2.y)
   local right = math.min(r1.x + r1.w, r2.x + r2.w)
@@ -30,6 +29,25 @@ function rect_intersection(r1, r2)
     h = bottom - top,
   }
 end
-module.rect_intersection = rect_intersection
+
+---Clones object deeply
+---@param obj table
+---@param seen table|nil
+---@return table
+function module.copy(obj, seen)
+  if type(obj) ~= "table" then
+    return obj
+  end
+  if seen and seen[obj] then
+    return seen[obj]
+  end
+  local s = seen or {}
+  local res = setmetatable({}, getmetatable(obj))
+  s[obj] = res
+  for k, v in pairs(obj) do
+    res[module.copy(k, s)] = module.copy(v, s)
+  end
+  return res
+end
 
 return module
