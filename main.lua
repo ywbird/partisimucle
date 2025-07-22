@@ -1,14 +1,13 @@
 local vec2 = require("lib.nvec")
 local QuadTree = require("lib.quadtree")
-local uid = require("lib.uuid")
 local utils = require("lib.utils")
-local rect_contains = utils.rect_contains
 local printtable = require("lib.printtable")
 
 local WIDTH = 800
 local HEIGHT = 600
 local CAMERA_SPEED = 400
-local DETECT_RANGE = 60
+local PARTICLE_SIZE = 10
+local DETECT_RANGE = PARTICLE_SIZE * 3
 
 local random = love.math.random
 
@@ -18,6 +17,7 @@ local random = love.math.random
 --- @field pos Vec2
 --- @field speed Vec2
 --- @field mass number
+--- @field move boolean
 -- --- @field uid string
 local Particle = {}
 Particle.__index = Particle
@@ -27,8 +27,9 @@ Particle.__index = Particle
 function Particle:new(properties)
   local instance = setmetatable({}, self)
   instance.pos = properties.pos or vec2(0, 0)
-  instance.speed = properties.speed or rotated(math.pi * 2 * random())
+  instance.speed = properties.speed or rotated(math.pi * 2 * random()) * 10
   instance.mass = properties.mass or 1
+  instance.move = true
   --instance.uid = uid()
   return instance
 end
@@ -48,6 +49,8 @@ function love.load()
 
   zoom = 1
 
+  pause = false
+
   font = {}
   font.galmuri = {}
   font.galmuri.normal = love.graphics.newFont("assets/fonts/Galmuri11.ttf", 12)
@@ -63,7 +66,7 @@ function love.load()
   --- @type Particle[]
   particles_buf = {}
 
-  for _ = 1, 1000, 1 do
+  for _ = 1, 300, 1 do
     -- love.math.setRandomSeed(os.time())
 
     local pos = vec2(random(-WIDTH / 2, WIDTH / 2), random(-HEIGHT / 2, HEIGHT / 2))
@@ -74,6 +77,25 @@ function love.load()
 
     table.insert(particles_buf, particle)
   end
+
+  -- local min_x = 0
+  -- local min_y = 0
+  -- local max_x = 0
+  -- local max_y = 0
+  -- for _, p in ipairs(particles) do
+  --   min_x = math.min(min_x, p.pos.x)
+  --   min_y = math.min(min_y, p.pos.y)
+  --   max_x = math.max(max_x, p.pos.x)
+  --   max_y = math.max(max_y, p.pos.y)
+  -- end
+
+  -- --- @type Rect
+  -- local world = {
+  --   x = min_x,
+  --   y = min_y,
+  --   w = max_x - min_x,
+  --   h = max_y - min_y,
+  -- }
 
   --- @type Rect
   world = {
@@ -118,7 +140,7 @@ function love.update(dt)
 
   camera = camera + move * modif
 
-  if love.keyboard.isDown("+") then
+  if love.keyboard.isDown("=") then
     zoom = zoom + dt
   end
   if love.keyboard.isDown("-") then
@@ -128,7 +150,28 @@ function love.update(dt)
     end
   end
 
-  particles = utils.copy(particles_buf)
+  -- local min_x = 0
+  -- local min_y = 0
+  -- local max_x = 0
+  -- local max_y = 0
+  -- for _, p in ipairs(particles) do
+  --   min_x = math.min(min_x, p.pos.x)
+  --   min_y = math.min(min_y, p.pos.y)
+  --   max_x = math.max(max_x, p.pos.x)
+  --   max_y = math.max(max_y, p.pos.y)
+  -- end
+  --
+  -- --- @type Rect
+  -- local world = {
+  --   x = min_x,
+  --   y = min_y,
+  --   w = max_x - min_x,
+  --   h = max_y - min_y,
+  -- }
+
+  if pause then
+    return
+  end
 
   qt = QuadTree:new(world)
 
@@ -136,7 +179,14 @@ function love.update(dt)
     qt:insert(particle)
   end
 
-  for _, particle in ipairs(particles) do
+  for i = 1, #particles, 1 do
+    ---@type Particle
+    local particle = utils.copy(particles[i])
+
+    if not particle.move then
+      return
+    end
+
     local near_particles_query = qt:query({
       x = particle.pos.x - DETECT_RANGE,
       y = particle.pos.y - DETECT_RANGE,
@@ -144,20 +194,48 @@ function love.update(dt)
       h = DETECT_RANGE * 2,
     } --[[@as Rect]])
 
-    particle.pos = particle.pos + particle.speed * 10 * dt
-
     -- printtable(near_particles_query)
     for _, p in ipairs(near_particles_query) do
-      if p.pos ~= particle.pos then
-        -- local d = particle.pos:dist2(p.pos)
-        -- if d < DETECT_RANGE * DETECT_RANGE then
-        --   particle.pos = particle.pos - (p.pos - particle.pos) / d * dt * 200
-        -- end
+      local d2 = particle.pos:dist2(p.pos)
+      if
+        p.pos ~= particle.pos --
+        and d2 <= PARTICLE_SIZE * PARTICLE_SIZE * 4
+      then
+        local p1 = particle
+        local p2 = p
+        local n = (p2.pos - p1.pos):normalized()
+        if d2 <= PARTICLE_SIZE * PARTICLE_SIZE then
+          p1.pos = (p1.pos + p2.pos) / 2 + n * PARTICLE_SIZE * 1.2
+        end
+        local v = p1.speed - 2 * p2.mass / (p2.mass + p1.mass) * (p1.speed - p2.speed):dot(n) * n
+        particle.speed = v
       end
     end
+
+    particle.pos = particle.pos + particle.speed * 10 * dt
+
+    if particle.pos.x > WIDTH / 2 then
+      particle.pos.x = WIDTH - particle.pos.x
+      particle.speed.x = -particle.speed.x
+    end
+    if particle.pos.x < -WIDTH / 2 then
+      particle.pos.x = -WIDTH - particle.pos.x
+      particle.speed.x = -particle.speed.x
+    end
+    if particle.pos.y > HEIGHT / 2 then
+      particle.pos.y = HEIGHT - particle.pos.y
+      particle.speed.y = -particle.speed.y
+    end
+    if particle.pos.y < -HEIGHT / 2 then
+      particle.pos.y = -HEIGHT - particle.pos.y
+      particle.speed.y = -particle.speed.y
+    end
+
+    particles_buf[i] = particle
   end
 
-  particles_buf = qt:query(world)
+  ---@type Particle[]
+  particles = utils.copy(particles_buf)
 end
 
 function love.draw()
@@ -170,13 +248,13 @@ function love.draw()
       "fill",
       400 + (particle.pos.x - camera.x) * zoom,
       300 + (particle.pos.y - camera.y) * zoom,
-      3 * zoom
+      PARTICLE_SIZE * zoom
     )
     love.graphics.line(
       400 + (particle.pos.x - camera.x) * zoom, --
       300 + (particle.pos.y - camera.y) * zoom, --
-      400 + (particle.pos.x + particle.speed.x * 10 - camera.x) * zoom, --
-      300 + (particle.pos.y + particle.speed.y * 10 - camera.y) * zoom --
+      400 + (particle.pos.x + particle.speed.x - camera.x) * zoom, --
+      300 + (particle.pos.y + particle.speed.y - camera.y) * zoom --
     )
     -- love.graphics.circle(
     --   "line",
@@ -200,6 +278,9 @@ end
 function love.keypressed(k)
   if k == "q" then
     love.event.quit()
+  end
+  if k == "space" then
+    pause = not pause
   end
 end
 
